@@ -12,6 +12,13 @@
 extern WalterModem modem;
 extern const char* FAIL_PATH;
 
+extern char mac[12];
+
+/* Config */
+extern int32_t sleepTime;
+extern uint8_t queueSizeMax;
+extern uint16_t batteryCapacity;
+
 const uint16_t MQTT_KEEPALIVE = 30;
 const uint16_t MQTT_TIMEOUT = 60;
 const char* MQTT_CLIENTID = "gps-tracker-";
@@ -20,13 +27,14 @@ const char* MQTT_HOST = SECRET_MQTT_HOST;
 const uint16_t MQTT_PORT = SECRET_MQTT_PORT;
 const char* MQTT_USER = SECRET_MQTT_USER;
 const char* MQTT_PASS = SECRET_MQTT_PASS;
-const char* MQTT_TOPIC = SECRET_MQTT_TOPIC;
+const char* MQTT_READING_TOPIC = SECRET_MQTT_READING_TOPIC;
+const char* MQTT_CONFIG_TOPIC = SECRET_MQTT_CONFIG_TOPIC;
 const uint8_t SEND_RATE = SECRET_SEND_RATE;
-
-
 const uint16_t SEND_DELAY = (60000 / SEND_RATE);
 
 volatile bool mqtt_connected = false;
+volatile bool config_fetched = false;
+
 
 /**
  * @brief The MQTT event handler.
@@ -71,7 +79,9 @@ void myMQTTEventHandler(WMMQTTEventType event, const WMMQTTEventData* data, void
       _printf("MQTT: Could not subscribe to topic. (code: %d)\r\n", data->rc);
     } else {
       _printf("MQTT: Successfully subscribed to topic '%s'\r\n", data->topic);
-      mqtt_connected = true;
+      if (!modem.mqttPublish(MQTT_CONFIG_TOPIC, (uint8_t*)mac, strlen(mac), 0)) {
+        _printf("Error: Failed to send message %s to server\r\n", mac);
+      }
     }
     break;
 
@@ -90,7 +100,7 @@ void myMQTTEventHandler(WMMQTTEventType event, const WMMQTTEventData* data, void
   }
 }
 
-bool sendQueue(File* readingQueue, char* mac)
+bool connect()
 {
   if (!lteConnected() && !lteConnect()) {
     _println("Error: Could not connect to LTE network");
@@ -118,7 +128,26 @@ bool sendQueue(File* readingQueue, char* mac)
       return false;
     }
   }
+  return true;
+}
 
+void disconnect()
+{
+  delay(500);
+  if (!modem.mqttDisconnect()) {
+    _println("Error: Could not disconnect from MQTT server");
+  }
+  uint16_t attempt = 0;
+  while (mqtt_connected) {
+    delay(200);
+    if (++attempt > (MQTT_TIMEOUT * 5)) {
+      _println("Error: Could not disconnect from MQTT server");
+    }
+  }
+}
+
+bool sendQueue(File* readingQueue)
+{
   File failures = LittleFS.open(FAIL_PATH, FILE_WRITE);
   if (!failures) {
     _println("Error: failed to open failure queue");
@@ -128,30 +157,20 @@ bool sendQueue(File* readingQueue, char* mac)
     uint8_t reading[READING_SIZE] = {0};
     readingQueue->read(reading, READING_SIZE);
     delay(SEND_DELAY);
-    if (!sendLine(reading, mac)) {
+    if (!sendLine(reading)) {
       _println("Failed to send reading");
       failures.write(reading, sizeof(reading));
     }
   }
   failures.close();
 
-  delay(500);
-  if (!modem.mqttDisconnect()) {
-    _println("Error: Could not disconnect from MQTT server");
-  }
-  attempt = 0;
-  while (mqtt_connected) {
-    delay(200);
-    if (++attempt > (MQTT_TIMEOUT * 5)) {
-      _println("Error: Could not disconnect from MQTT server");
-    }
-  }
+  disconnect();
 
   _println("Sent location queue to MQTT server");
   return true;
 }
 
-bool sendLine(const uint8_t* reading, char* mac)
+bool sendLine(const uint8_t* reading)
 {
   float lat32;
   float lon32;
@@ -182,7 +201,7 @@ bool sendLine(const uint8_t* reading, char* mac)
   sprintf(msg, "mac:%s,time:%" PRIi64 ",bat:%d,temp:%.2f,lat:%.6f,lon:%.6f",
       sendMac, timestamp, battery, temp, lat32, lon32);
 
-  if (!modem.mqttPublish(MQTT_TOPIC, (uint8_t*)msg, strlen(msg), 0)) {
+  if (!modem.mqttPublish(MQTT_READING_TOPIC, (uint8_t*)msg, strlen(msg), 0)) {
     _printf("Error: Failed to send message %s to server\r\n", msg);
     return false;
   }
@@ -190,3 +209,31 @@ bool sendLine(const uint8_t* reading, char* mac)
   return true;
 }
 
+bool requestConfig()
+{
+  if (!connect()) {
+    return false;
+  }
+
+  char topic[strlen(MQTT_CONFIG_TOPIC) + 12];
+  sprintf(topic, "%s-%s", MQTT_CONFIG_TOPIC, mac);
+
+  if (!modem.mqttSubscribe(topic)) {
+    _printf("Error: Failed to subscribe to config topic\r\n", topic);
+    return false;
+  }
+
+  uint16_t attempt = 0;
+  while (!config_fetched) {
+    delay(200);
+    if (++attempt > (MQTT_TIMEOUT * 5)) {
+      _println("Error: Could not connect to MQTT server");
+      break;
+    }
+  }
+
+  disconnect();
+
+  _println("Fetched config from server");
+  return true;
+}

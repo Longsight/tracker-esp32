@@ -98,6 +98,8 @@ void setup()
   modem.setGNSSEventHandler(myGNSSEventHandler, NULL);
   modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
 
+  requestConfig();
+
   /* Tracker config */
   trackerPrefs.begin("trackerConfig", RO_MODE);
 
@@ -163,7 +165,7 @@ void loop()
     _printf("%d readings in the queue\r\n", queueSize);
     bool sent = false;
     if (queueSize >= queueSizeMax) {
-      sent = sendQueue(&readingQueue, mac);
+      sent = sendQueue(&readingQueue);
       if (lteConnected() && !lteDisconnect()) {
         _println("Error: Could not disconnect from LTE network");
       }
