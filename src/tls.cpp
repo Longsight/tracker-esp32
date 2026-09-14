@@ -30,7 +30,7 @@ bool setupTLSProfile(void)
     return false;
   }
 
-  if(modem.tlsConfigProfile(MQTTS_TLS_PROFILE, WALTER_MODEM_TLS_VALIDATION_CA,
+  if(modem.tlsConfigProfile(TLS_PROFILE, WALTER_MODEM_TLS_VALIDATION_CA,
                             WALTER_MODEM_TLS_VERSION_12, 12)) {
     _println("TLS profile configured");
   } else {

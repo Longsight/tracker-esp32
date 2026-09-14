@@ -3,7 +3,7 @@
 
 #define USE_TLS true
 
-const int MQTTS_TLS_PROFILE = 2;
+const int TLS_PROFILE = 2;
 
 const char ca_cert[] PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----

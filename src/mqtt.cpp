@@ -1,6 +1,5 @@
 #include <WalterModem.h>
 #include <LittleFS.h>
-#include <esp_mac.h>
 #include <FS.h>
 
 #include "main.h"
@@ -16,6 +15,14 @@ extern const char* FAIL_PATH;
 const uint16_t MQTT_KEEPALIVE = 30;
 const uint16_t MQTT_TIMEOUT = 60;
 const char* MQTT_CLIENTID = "gps-tracker-";
+
+const char* MQTT_HOST = SECRET_MQTT_HOST;
+const uint16_t MQTT_PORT = SECRET_MQTT_PORT;
+const char* MQTT_USER = SECRET_MQTT_USER;
+const char* MQTT_PASS = SECRET_MQTT_PASS;
+const char* MQTT_TOPIC = SECRET_MQTT_TOPIC;
+const uint8_t SEND_RATE = SECRET_SEND_RATE;
+
 
 const uint16_t SEND_DELAY = (60000 / SEND_RATE);
 
@@ -92,7 +99,7 @@ bool sendQueue(File* readingQueue, char* mac)
   char clientId[strlen(MQTT_CLIENTID) + strlen(mac)];
   sprintf(clientId, "%s%s", MQTT_CLIENTID, mac);
 #if USE_TLS
-  if (!modem.mqttConfig(clientId, MQTT_USER, MQTT_PASS, MQTTS_TLS_PROFILE)) {
+  if (!modem.mqttConfig(clientId, MQTT_USER, MQTT_PASS, TLS_PROFILE)) {
 #else
   if (!modem.mqttConfig(clientId, MQTT_USER, MQTT_PASS)) {
 #endif

@@ -13,6 +13,8 @@
 #include "debug.h"
 #include "gnss.h"
 #include "mqtt.h"
+#include "http.h"
+#include "secret.h"
 
 char mac[12] = {0};
 
@@ -85,13 +87,28 @@ void setup()
   }
 
 #if USE_TLS
-  if(setupTLSProfile()) {
-    Serial.println("TLS Profile setup succeeded");
+  if (setupTLSProfile()) {
+    _println("TLS Profile setup succeeded");
   } else {
-    Serial.println("Error: TLS Profile setup failed");
+    _println("Error: TLS Profile setup failed");
     return;
   }
+  
+  if (setupHTTPSProfile) {
+    _println("Successfully configured the HTTP profile");
+  } else {
+    _println("Error: Failed to configure HTTP profile");
+  }
 #endif
+
+  /* Set the event handlers */
+  modem.setGNSSEventHandler(myGNSSEventHandler, NULL);
+  modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
+  modem.setHTTPEventHandler(myHTTPEventHandler, NULL);
+
+  char configPath[strlen(SECRET_CONFIG_PATH) + 12] = {0};
+  sprintf(configPath, "%s%s", SECRET_CONFIG_PATH, mac);
+  httpGet(configPath);
 
   /* Tracker config */
   trackerPrefs.begin("trackerConfig", RO_MODE);
@@ -119,10 +136,6 @@ void setup()
   if (timeRsp.data.clock.epochTime < startTime) {
     sleep((int32_t)(startTime - timeRsp.data.clock.epochTime));
   }
-
-  /* Set the GNSS event handler */
-  modem.setGNSSEventHandler(myGNSSEventHandler, NULL);
-  modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
 
   WalterModemRsp rsp = {};
 
