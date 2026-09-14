@@ -5,8 +5,9 @@
 #include <FS.h>
 
 void myMQTTEventHandler(WMMQTTEventType event, const WMMQTTEventData* data, void* args);
-bool connect();
-void disconnect();
+bool mqttConnected();
+bool mqttConnect();
+bool mqttDisconnect();
 bool sendLine(const uint8_t* reading);
 bool sendQueue(File* readingQueue);
 bool requestConfig();

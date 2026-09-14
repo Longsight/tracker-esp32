@@ -35,6 +35,7 @@ const uint16_t SEND_DELAY = (60000 / SEND_RATE);
 volatile bool mqtt_connected = false;
 volatile bool config_fetched = false;
 
+uint8_t in_buf[128] = { 0 };
 
 /**
  * @brief The MQTT event handler.
@@ -94,13 +95,32 @@ void myMQTTEventHandler(WMMQTTEventType event, const WMMQTTEventData* data, void
     }
     break;
 
+  case WALTER_MODEM_MQTT_EVENT_MESSAGE:
+    _printf("MQTT: Message (id: %d) received on topic '%s' (size: %ld bytes)\r\n", data->mid,
+                  data->topic, data->msg_length);
+
+    /* Receive the MQTT message from the modem buffer */
+    memset(in_buf, 0, sizeof(in_buf));
+    if(modem.mqttReceive(data->topic, data->mid, in_buf, data->msg_length)) {
+      _printf("Received message: %s\r\n", in_buf);
+    } else {
+      _println("Could not receive MQTT message");
+    }
+    config_fetched = true;
+    break;
+
   case WALTER_MODEM_MQTT_EVENT_MEMORY_FULL:
     _println("MQTT: Memory full");
     break;
   }
 }
 
-bool connect()
+bool mqttConnected()
+{
+  return mqtt_connected;
+}
+
+bool mqttConnect()
 {
   if (!lteConnected() && !lteConnect()) {
     _println("Error: Could not connect to LTE network");
@@ -131,23 +151,30 @@ bool connect()
   return true;
 }
 
-void disconnect()
+bool mqttDisconnect()
 {
   delay(500);
   if (!modem.mqttDisconnect()) {
     _println("Error: Could not disconnect from MQTT server");
+    return false;
   }
   uint16_t attempt = 0;
   while (mqtt_connected) {
     delay(200);
     if (++attempt > (MQTT_TIMEOUT * 5)) {
       _println("Error: Could not disconnect from MQTT server");
+      return false;
     }
   }
+  return true;
 }
 
 bool sendQueue(File* readingQueue)
 {
+  if (!mqttConnected() && !mqttConnect()) {
+    return false;
+  }
+
   File failures = LittleFS.open(FAIL_PATH, FILE_WRITE);
   if (!failures) {
     _println("Error: failed to open failure queue");
@@ -163,8 +190,6 @@ bool sendQueue(File* readingQueue)
     }
   }
   failures.close();
-
-  disconnect();
 
   _println("Sent location queue to MQTT server");
   return true;
@@ -211,7 +236,7 @@ bool sendLine(const uint8_t* reading)
 
 bool requestConfig()
 {
-  if (!connect()) {
+  if (!mqttConnected() && !mqttConnect()) {
     return false;
   }
 
@@ -227,12 +252,10 @@ bool requestConfig()
   while (!config_fetched) {
     delay(200);
     if (++attempt > (MQTT_TIMEOUT * 5)) {
-      _println("Error: Could not connect to MQTT server");
+      _println("Error: Could not fetch config");
       break;
     }
   }
-
-  disconnect();
 
   _println("Fetched config from server");
   return true;

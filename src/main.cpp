@@ -166,6 +166,9 @@ void loop()
     bool sent = false;
     if (queueSize >= queueSizeMax) {
       sent = sendQueue(&readingQueue);
+      if (mqttConnected() && !mqttDisconnect()) {
+        _println("Error: Could not disconnect from MQTT server");
+      }
       if (lteConnected() && !lteDisconnect()) {
         _println("Error: Could not disconnect from LTE network");
       }
