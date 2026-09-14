@@ -1,4 +1,6 @@
 #include <WalterModem.h>
+#include <Preferences.h>
+#include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <FS.h>
 
@@ -10,14 +12,10 @@
 #include "debug.h"
 
 extern WalterModem modem;
+extern Preferences trackerPrefs;
 extern const char* FAIL_PATH;
 
 extern char mac[12];
-
-/* Config */
-extern int32_t sleepTime;
-extern uint8_t queueSizeMax;
-extern uint16_t batteryCapacity;
 
 const uint16_t MQTT_KEEPALIVE = 30;
 const uint16_t MQTT_TIMEOUT = 60;
@@ -34,8 +32,6 @@ const uint16_t SEND_DELAY = (60000 / SEND_RATE);
 
 volatile bool mqtt_connected = false;
 volatile bool config_fetched = false;
-
-uint8_t in_buf[128] = { 0 };
 
 /**
  * @brief The MQTT event handler.
@@ -55,63 +51,78 @@ uint8_t in_buf[128] = { 0 };
  */
 void myMQTTEventHandler(WMMQTTEventType event, const WMMQTTEventData* data, void* args)
 {
+  uint8_t configBuf[128] = { 0 };
+
   switch(event) {
-  case WALTER_MODEM_MQTT_EVENT_CONNECTED:
-    if(data->rc != 0) {
-      _printf("MQTT: Connection could not be established. (code: %d)\r\n", data->rc);
-    } else {
-      _printf("MQTT: Connected successfully\r\n");
+    case WALTER_MODEM_MQTT_EVENT_CONNECTED:
+      if(data->rc != 0) {
+        _printf("MQTT: Connection could not be established. (code: %d)\r\n", data->rc);
+      } else {
+        _printf("MQTT: Connected successfully\r\n");
 
-      mqtt_connected = true;
-    }
-    break;
-
-  case WALTER_MODEM_MQTT_EVENT_DISCONNECTED:
-    if(data->rc != 0) {
-      _printf("MQTT: Connection was interrupted (code: %d)\r\n", data->rc);
-    } else {
-      _printf("MQTT: Disconnected\r\n");
-    }
-    mqtt_connected = false;
-    break;
-
-  case WALTER_MODEM_MQTT_EVENT_SUBSCRIBED:
-    if(data->rc != 0) {
-      _printf("MQTT: Could not subscribe to topic. (code: %d)\r\n", data->rc);
-    } else {
-      _printf("MQTT: Successfully subscribed to topic '%s'\r\n", data->topic);
-      if (!modem.mqttPublish(MQTT_CONFIG_TOPIC, (uint8_t*)mac, strlen(mac), 0)) {
-        _printf("Error: Failed to send message %s to server\r\n", mac);
+        mqtt_connected = true;
       }
-    }
-    break;
+      break;
 
-  case WALTER_MODEM_MQTT_EVENT_PUBLISHED:
-    if(data->rc != 0) {
-      _printf("MQTT: Could not publish message (id: %d) to topic. (code: %d)\r\n", data->mid,
-                    data->rc);
-    } else {
-      _printf("MQTT: Successfully published message (id: %d)\r\n", data->mid);
-    }
-    break;
+    case WALTER_MODEM_MQTT_EVENT_DISCONNECTED:
+      if(data->rc != 0) {
+        _printf("MQTT: Connection was interrupted (code: %d)\r\n", data->rc);
+      } else {
+        _printf("MQTT: Disconnected\r\n");
+      }
+      mqtt_connected = false;
+      break;
 
-  case WALTER_MODEM_MQTT_EVENT_MESSAGE:
-    _printf("MQTT: Message (id: %d) received on topic '%s' (size: %ld bytes)\r\n", data->mid,
-                  data->topic, data->msg_length);
+    case WALTER_MODEM_MQTT_EVENT_SUBSCRIBED:
+      if(data->rc != 0) {
+        _printf("MQTT: Could not subscribe to topic. (code: %d)\r\n", data->rc);
+      } else {
+        _printf("MQTT: Successfully subscribed to topic '%s'\r\n", data->topic);
+        if (!modem.mqttPublish(MQTT_CONFIG_TOPIC, (uint8_t*)mac, strlen(mac), 0)) {
+          _printf("Error: Failed to send message %s to server\r\n", mac);
+        }
+      }
+      break;
 
-    /* Receive the MQTT message from the modem buffer */
-    memset(in_buf, 0, sizeof(in_buf));
-    if(modem.mqttReceive(data->topic, data->mid, in_buf, data->msg_length)) {
-      _printf("Received message: %s\r\n", in_buf);
-    } else {
-      _println("Could not receive MQTT message");
-    }
-    config_fetched = true;
-    break;
+    case WALTER_MODEM_MQTT_EVENT_PUBLISHED:
+      if(data->rc != 0) {
+        _printf("MQTT: Could not publish message (id: %d) to topic. (code: %d)\r\n", data->mid,
+                      data->rc);
+      } else {
+        _printf("MQTT: Successfully published message (id: %d)\r\n", data->mid);
+      }
+      break;
 
-  case WALTER_MODEM_MQTT_EVENT_MEMORY_FULL:
-    _println("MQTT: Memory full");
-    break;
+    case WALTER_MODEM_MQTT_EVENT_MESSAGE:
+      _printf("MQTT: Message (id: %d) received on topic '%s' (size: %ld bytes)\r\n", data->mid,
+                    data->topic, data->msg_length);
+
+      memset(configBuf, 0, sizeof(configBuf));
+      /* Receive the MQTT message from the modem buffer */
+      if(modem.mqttReceive(data->topic, data->mid, configBuf, data->msg_length)) {
+        _printf("Received message: %s\r\n", configBuf);
+
+        JsonDocument configDoc;
+        deserializeJson(configDoc, configBuf);
+
+        trackerPrefs.begin("trackerConfig", RW_MODE);
+
+        trackerPrefs.putLong64("startTime", configDoc["start_time"]);
+        trackerPrefs.putInt("sleepTime", configDoc["sleep_time"]);
+        trackerPrefs.putUChar("queueSizeMax", configDoc["queue_size"]);
+        trackerPrefs.putUShort("batteryCapacity", configDoc["battery_capacity"]);
+
+        trackerPrefs.putBool("ready", true);
+        trackerPrefs.end();
+      } else {
+        _println("Could not receive MQTT message");
+      }
+      config_fetched = true;
+      break;
+
+    case WALTER_MODEM_MQTT_EVENT_MEMORY_FULL:
+      _println("MQTT: Memory full");
+      break;
   }
 }
 

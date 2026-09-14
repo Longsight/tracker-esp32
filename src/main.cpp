@@ -41,6 +41,7 @@ bool batteryAvail = false;
 const int32_t RECHECK_TIME = 1800;
 
 /* Config */
+int64_t startTime;
 int32_t sleepTime;
 uint8_t queueSizeMax;
 uint16_t batteryCapacity;
@@ -98,24 +99,30 @@ void setup()
   modem.setGNSSEventHandler(myGNSSEventHandler, NULL);
   modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
 
-  requestConfig();
+#if RESET
+  trackerPrefs.begin("trackerConfig", RW_MODE);
+  trackerPrefs.clear();
+  trackerPrefs.end();
+#endif
 
   /* Tracker config */
   trackerPrefs.begin("trackerConfig", RO_MODE);
 
   if (!trackerPrefs.getBool("ready")) {
     trackerPrefs.end();
-
-    trackerPrefs.begin("trackerConfig", RW_MODE);
-    trackerPrefs.putBool("ready", true);
-    trackerPrefs.end();
+    requestConfig();
     trackerPrefs.begin("trackerConfig", RO_MODE);
   }
 
-  const int64_t startTime = trackerPrefs.getLong64("startTime");
+  startTime = trackerPrefs.getLong64("startTime");
   sleepTime = trackerPrefs.getInt("sleepTime");
   queueSizeMax = trackerPrefs.getUChar("queueSizeMax");
   batteryCapacity = trackerPrefs.getUShort("batteryCapacity");
+
+  _printf("Start time: %" PRIi64 "\r\n", startTime);
+  _printf("Sleep time: %d\r\n", sleepTime);
+  _printf("Queue size: %d\r\n", queueSizeMax);
+  _printf("Battery: %dmAh\r\n", batteryCapacity);
    
   /* Check the time, if we can */
   WalterModemRsp timeRsp = {};
@@ -166,12 +173,6 @@ void loop()
     bool sent = false;
     if (queueSize >= queueSizeMax) {
       sent = sendQueue(&readingQueue);
-      if (mqttConnected() && !mqttDisconnect()) {
-        _println("Error: Could not disconnect from MQTT server");
-      }
-      if (lteConnected() && !lteDisconnect()) {
-        _println("Error: Could not disconnect from LTE network");
-      }
     }
     readingQueue.close();
     if (sent) {
@@ -179,6 +180,13 @@ void loop()
         _printf("Error: Failed to copy %s to %s\r\n", FAIL_PATH, LOG_PATH);
       }
     }
+  }
+
+  if (mqttConnected() && !mqttDisconnect()) {
+    _println("Error: Could not disconnect from MQTT server");
+  }
+  if (lteConnected() && !lteDisconnect()) {
+    _println("Error: Could not disconnect from LTE network");
   }
 
   WalterModemRsp rsp = {};
