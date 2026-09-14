@@ -1,4 +1,6 @@
 #include <Wire.h>
+#include <Preferences.h>
+
 #include <LittleFS.h>
 #include <FS.h>
 #include <SparkFunBQ27441.h>
@@ -15,31 +17,33 @@
 char mac[12] = {0};
 
 WalterModem modem;
+Preferences trackerPrefs;
 
 extern WMGNSSFixEvent latestGnssFix;
 
 #if DEBUG
 const int32_t SLEEP_TIME_MIN = 10;
-const int32_t SLEEP_TIME = 20;
 const uint8_t GNSS_ATTEMPTS = 1;
 #else
-const int32_t SLEEP_TIME_MIN = 60;
-const int32_t SLEEP_TIME = 120;
+const int32_t SLEEP_TIME_MIN = 30;
 const uint8_t GNSS_ATTEMPTS = 3;
 #endif
 
 const char* LOG_PATH = "/readings.txt";
 const char* FAIL_PATH = "/failed.txt";
-const uint8_t QUEUE_SIZE_MAX = 5;
 
 const uint8_t SDA_PIN = 15;
 const uint8_t SCL_PIN = 16;
-const uint16_t BATTERY_CAPACITY = 2000;
 
 bool batteryAvail = false;
 
 const int32_t RECHECK_TIME = 1800;
-const int64_t START_TIME = 1789196400;
+
+/* Config */
+int32_t sleepTime;
+uint8_t queueSizeMax;
+uint16_t batteryCapacity;
+
 
 /**
  * @brief The main Arduino setup method.
@@ -80,19 +84,6 @@ void setup()
     sleep();
   }
 
-  WalterModemRsp timeRsp = {};
-  if (!validateGNSSClock(&timeRsp)) {
-    sleep(RECHECK_TIME);
-  }
-
-  if (timeRsp.data.clock.epochTime < START_TIME) {
-    sleep((int32_t)(START_TIME - timeRsp.data.clock.epochTime));
-  }
-
-  /* Set the GNSS event handler */
-  modem.setGNSSEventHandler(myGNSSEventHandler, NULL);
-  modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
-
 #if USE_TLS
   if(setupTLSProfile()) {
     Serial.println("TLS Profile setup succeeded");
@@ -101,6 +92,37 @@ void setup()
     return;
   }
 #endif
+
+  /* Tracker config */
+  trackerPrefs.begin("trackerConfig", RO_MODE);
+
+  if (!trackerPrefs.getBool("ready")) {
+    trackerPrefs.end();
+
+    trackerPrefs.begin("trackerConfig", RW_MODE);
+    trackerPrefs.putBool("ready", true);
+    trackerPrefs.end();
+    trackerPrefs.begin("trackerConfig", RO_MODE);
+  }
+
+  const int64_t startTime = trackerPrefs.getLong64("startTime");
+  sleepTime = trackerPrefs.getInt("sleepTime");
+  queueSizeMax = trackerPrefs.getUChar("queueSizeMax");
+  batteryCapacity = trackerPrefs.getUShort("batteryCapacity");
+   
+  /* Check the time, if we can */
+  WalterModemRsp timeRsp = {};
+  if (!validateGNSSClock(&timeRsp)) {
+    sleep(RECHECK_TIME);
+  }
+
+  if (timeRsp.data.clock.epochTime < startTime) {
+    sleep((int32_t)(startTime - timeRsp.data.clock.epochTime));
+  }
+
+  /* Set the GNSS event handler */
+  modem.setGNSSEventHandler(myGNSSEventHandler, NULL);
+  modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
 
   WalterModemRsp rsp = {};
 
@@ -120,7 +142,7 @@ void setup()
   digitalWrite(GPIO_NUM_0, LOW);
   Wire.setPins(SDA_PIN, SCL_PIN);
   if (lipo.begin()) {
-    lipo.setCapacity(BATTERY_CAPACITY);
+    lipo.setCapacity(batteryCapacity);
     batteryAvail = true;
   } else {
     _println("Error: Could not configure the battery subsystem");
@@ -139,7 +161,7 @@ void loop()
     size_t queueSize = readingQueue.size() / READING_SIZE;
     _printf("%d readings in the queue\r\n", queueSize);
     bool sent = false;
-    if (queueSize >= QUEUE_SIZE_MAX) {
+    if (queueSize >= queueSizeMax) {
       sent = sendQueue(&readingQueue, mac);
       if (lteConnected() && !lteDisconnect()) {
         _println("Error: Could not disconnect from LTE network");
@@ -213,6 +235,6 @@ void sleep(int32_t time)
 
 void sleep()
 {
-  const int32_t ACTUAL_DELAY = max(SLEEP_TIME - (int32_t)(millis() / 1000), SLEEP_TIME_MIN);
+  const int32_t ACTUAL_DELAY = max(sleepTime - (int32_t)(millis() / 1000), SLEEP_TIME_MIN);
   sleep(ACTUAL_DELAY);
 }

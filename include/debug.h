@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 void _printf(const char *format, ...);
 void _println(const String &s);
