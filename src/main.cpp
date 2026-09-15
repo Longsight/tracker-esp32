@@ -7,6 +7,7 @@
 #include <WalterModem.h>
 #include <esp_mac.h>
 #include <esp_sleep.h>
+#include <nvs_flash.h>
 
 #include "main.h"
 #include "tls.h"
@@ -38,10 +39,11 @@ const uint8_t SCL_PIN = 16;
 
 bool batteryAvail = false;
 
-const int32_t RECHECK_TIME = 1800;
+const int32_t RECHECK_TIME = 43200;
 
 /* Config */
 int64_t startTime;
+int64_t finishTime;
 int32_t sleepTime;
 uint8_t queueSizeMax;
 uint16_t batteryCapacity;
@@ -100,9 +102,7 @@ void setup()
   modem.setMQTTEventHandler(myMQTTEventHandler, NULL);
 
 #if RESET
-  trackerPrefs.begin("trackerConfig", RW_MODE);
-  trackerPrefs.clear();
-  trackerPrefs.end();
+  reset();
 #endif
 
   /* Tracker config */
@@ -110,20 +110,29 @@ void setup()
 
   if (!trackerPrefs.getBool("ready")) {
     trackerPrefs.end();
-    requestConfig();
+    if (!requestConfig()) {
+      sleep(RECHECK_TIME);
+    }
     trackerPrefs.begin("trackerConfig", RO_MODE);
   }
 
   startTime = trackerPrefs.getLong64("startTime");
+  finishTime = trackerPrefs.getLong64("finishTime");
   sleepTime = trackerPrefs.getInt("sleepTime");
   queueSizeMax = trackerPrefs.getUChar("queueSizeMax");
   batteryCapacity = trackerPrefs.getUShort("batteryCapacity");
 
   _printf("Start time: %" PRIi64 "\r\n", startTime);
+  _printf("Finish time: %" PRIi64 "\r\n", finishTime);
   _printf("Sleep time: %d\r\n", sleepTime);
   _printf("Queue size: %d\r\n", queueSizeMax);
   _printf("Battery: %dmAh\r\n", batteryCapacity);
    
+  if (startTime == 0 || finishTime == 0) {
+    _println("No tracker config");
+    reset();
+  }
+
   /* Check the time, if we can */
   WalterModemRsp timeRsp = {};
   if (!validateGNSSClock(&timeRsp)) {
@@ -131,7 +140,14 @@ void setup()
   }
 
   if (timeRsp.data.clock.epochTime < startTime) {
+    _println("Race has not yet started");
     sleep((int32_t)(startTime - timeRsp.data.clock.epochTime));
+  }
+
+  if (timeRsp.data.clock.epochTime > finishTime) {
+    _println("Race has ended, resetting");
+    reset();
+    sleep(RECHECK_TIME);
   }
 
   WalterModemRsp rsp = {};
@@ -251,4 +267,16 @@ void sleep()
 {
   const int32_t ACTUAL_DELAY = max(sleepTime - (int32_t)(millis() / 1000), SLEEP_TIME_MIN);
   sleep(ACTUAL_DELAY);
+}
+
+void reset()
+{
+  _println("Resetting to factory config...");
+  nvs_flash_erase();
+  nvs_flash_init();
+  if (LittleFS.exists(LOG_PATH) && !LittleFS.remove(LOG_PATH)) {
+    _printf("Error: Failed to remove %s\r\n", LOG_PATH);
+  }
+  delay(500);
+  sleep(RECHECK_TIME);
 }

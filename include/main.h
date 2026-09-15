@@ -11,5 +11,6 @@ void loop();
 void setup();
 void sleep();
 void sleep(int32_t time);
+void reset();
 
 #endif

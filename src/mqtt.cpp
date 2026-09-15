@@ -108,6 +108,7 @@ void myMQTTEventHandler(WMMQTTEventType event, const WMMQTTEventData* data, void
         trackerPrefs.begin("trackerConfig", RW_MODE);
 
         trackerPrefs.putLong64("startTime", configDoc["start_time"]);
+        trackerPrefs.putLong64("finishTime", configDoc["finish_time"]);
         trackerPrefs.putInt("sleepTime", configDoc["sleep_time"]);
         trackerPrefs.putUChar("queueSizeMax", configDoc["queue_size"]);
         trackerPrefs.putUShort("batteryCapacity", configDoc["battery_capacity"]);
@@ -266,6 +267,10 @@ bool requestConfig()
       _println("Error: Could not fetch config");
       break;
     }
+  }
+  if (!config_fetched) {
+    _println("Error: Could not fetch config");
+    return false;
   }
 
   _println("Fetched config from server");
